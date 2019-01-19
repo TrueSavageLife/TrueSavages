@@ -32,12 +32,17 @@ namespace TrueSavages
         public static extern bool Beep(int dwFreq, int dwDuration);
 
         /* global variables */
+        internal bool beep = false;
+        internal bool logOnDeath = true;
+        internal bool logOnVitae = true;
         internal bool relogging = false;
+        internal bool currentlyRelogging = false;
         internal bool debug = false;
         internal System.Windows.Forms.Timer relogTimer = new System.Windows.Forms.Timer();
+        internal System.Windows.Forms.Timer vitTimer = new System.Windows.Forms.Timer();
         internal DateTime startTime;
         internal TimeSpan remaining;
-        internal int relogDuration = 1;
+        internal int relogDuration = 3;
         internal int monarch = 0;
         internal string loggedBy;
         internal bool alertGuild = false;
@@ -77,6 +82,7 @@ namespace TrueSavages
         {
             CoreManager.Current.CommandLineText += CheckCommands;
             CoreManager.Current.CharacterFilter.LoginComplete += LoginComplete;
+            CoreManager.Current.CharacterFilter.Logoff += Logoff;
             CoreManager.Current.CharacterFilter.Login += Login;
             CoreManager.Current.CharacterFilter.Death += Death;
         }
@@ -87,6 +93,7 @@ namespace TrueSavages
             Console.WriteLine("plugintermcomplete");
             CoreManager.Current.CommandLineText -= CheckCommands;
             CoreManager.Current.CharacterFilter.LoginComplete -= LoginComplete;
+            CoreManager.Current.CharacterFilter.Logoff -= Logoff;
             CoreManager.Current.CharacterFilter.Login -= Login;
             CoreManager.Current.CharacterFilter.Death -= Death;
             CoreManager.Current.WorldFilter.CreateObject -= CreateObject;
@@ -98,7 +105,11 @@ namespace TrueSavages
             enemies.Clear();
             Console.WriteLine("Enemies List Cleared");
             Console.WriteLine("Enemies List Count: " + enemies.Count.ToString());
-            alertGuild = false;
+            if (relogging)
+            {
+                SetRelogTimer();
+            }
+
         }
 
         /* create a debugging console */
@@ -151,31 +162,29 @@ namespace TrueSavages
                 int distance = Convert.ToInt32(playerDistance);
                 bool contained = enemies.Contains(wo.Id);
 
-                Console.WriteLine("Player: " + wo.Name + " Distance: " + playerDistance.ToString());
+                //Console.WriteLine("Player: " + wo.Name + " Distance: " + playerDistance.ToString());
 
                 if ((woMonarch != monarch))
                 {
                     if (!contained)
                     {
-                        Beep(5000, 50);
-                        enemies.Add(wo.Id);
+                        if (beep)
+                        {
+                            Beep(5000, 50);
+                        }
 
+                        enemies.Add(wo.Id);               
                         Console.WriteLine("Enemy Added: " + wo.Id);
                         Console.WriteLine("Enemies List Count: " + enemies.Count.ToString());
                         LogText("Enemy Detected: " + wo.Name + " at [ " + wo.Coordinates().ToString() + " ]");
                     }
                 }
 
-                if (relogging && (woMonarch != monarch) && distance <= 125)
+                if (relogging && (woMonarch != monarch) && !currentlyRelogging && distance <= 125)
                 {
                     loggedBy = wo.Name;
-                    string coords = wo.Coordinates().ToString();
-
-                    if (!alertGuild)
-                    {
-                        SetRelogTimer();
-                        alertGuild = true;
-                    }
+                    currentlyRelogging = true;
+                    string coords = wo.Coordinates().ToString();               
 
                     CoreManager.Current.Actions.Logout();
                     Console.WriteLine("logged by " + loggedBy);
@@ -223,7 +232,7 @@ namespace TrueSavages
             try
             {
                 relogTimer.Tick += ParseRelogTimer;
-                relogTimer.Interval = 1000;
+                relogTimer.Interval = 100;
                 startTime = DateTime.Now;
                 relogTimer.Enabled = true;
             }
@@ -276,11 +285,35 @@ namespace TrueSavages
 
                 string cmd = e.Text.ToLower().Trim();
 
-                if (cmd == "/help")
+                if (cmd == "/tsl help")
                 {
                     e.Eat = true;
-                    LogText("/relog to enable or disable the relogger");
-                    LogText("/duration <minutes> to set the relog timer (default is 1 minute)");
+                    LogText("/relog to enable/disable the relogger");
+                    LogText("/duration <minutes> to set the relog timer (default is 3 minute)");
+                    LogText("/beep to enable/disable beep sound on enemy detection");
+                    LogText("/death to toggle log on death");
+                    LogText("/vitae to toggle close client on >= 10% vit");
+                    LogText("/pk toggles pk targeting plugin (only works in fellows)");
+                }
+
+                if (cmd == "/vitae")
+                {
+                    e.Eat = true;
+                    logOnVitae = !logOnVitae;
+                    LogText("Log on vitae is " + (logOnVitae ? "enabled" : "disabled"));
+                }
+
+                if (cmd == "/death")
+                {
+                    e.Eat = true;
+                    logOnDeath = !logOnDeath;
+                    LogText("Log on death is " + (logOnDeath ? "enabled" : "disabled"));
+                }
+                if (cmd == "/beep")
+                {
+                    e.Eat = true;
+                    beep = !beep;
+                    LogText("Beep is " + (beep ? "enabled" : "disabled"));
                 }
 
 
@@ -375,16 +408,60 @@ namespace TrueSavages
         void Death (object sender, DeathEventArgs e)
         {
             Console.WriteLine("Logged out on death");
-            ToggleRelogger(false);
-            relogTimer.Enabled = false;
-            SetWindowText(base.Host.Decal.Hwnd, e.Text);
-            CoreManager.Current.Actions.Logout();
+            int vitae = CoreManager.Current.CharacterFilter.Vitae;
+
+            if (!logOnDeath)
+            {
+                LogText("[Warning] You currently have log on Death disabled", 6);
+            }
+
+            if (vitae >= 15 && logOnDeath)
+            {
+                System.Environment.Exit(1);
+            }
+
+            if (logOnDeath)
+            {
+                ToggleRelogger(false);
+                relogTimer.Enabled = false;
+                SetWindowText(base.Host.Decal.Hwnd, e.Text);
+                CoreManager.Current.Actions.Logout();
+            }
+        }
+
+        void Logoff(object sender, EventArgs e)
+        {
+            Console.WriteLine("Logoff Complete");
+        }
+        
+        void VitHandler (object sender, EventArgs e)
+        {
+            vitTimer.Stop();
+            vitTimer.Tick -= VitHandler;
+
+            if (logOnVitae)
+            {
+                ToggleRelogger(false);
+                CoreManager.Current.Actions.Logout();
+                SetWindowText(base.Host.Decal.Hwnd, "Logged off due to Vitae");
+            }
         }
 
         /* this event is fired when login completes */
         void LoginComplete(object sender, EventArgs e)
         {
             Console.WriteLine("Login Complete");
+
+            int vitae = CoreManager.Current.CharacterFilter.Vitae;
+
+            if (vitae >= 10 && logOnVitae)
+            {
+                LogText("You have over 10% vitae, type /vitae or your character will be logged off", 6);
+
+                vitTimer.Interval = 10 * 1000;
+                vitTimer.Tick += VitHandler;
+                vitTimer.Start();             
+            }
 
             try
             {
@@ -412,7 +489,7 @@ namespace TrueSavages
 
                 if (!relogging)
                 {
-                    LogText("type /help for commands");
+                    LogText("type /tsl help for commands");
                     return;
                 }
 
@@ -491,6 +568,7 @@ namespace TrueSavages
         void Login (object sender, EventArgs e)
         {
             Console.WriteLine("Logging in");
+            currentlyRelogging = false;
             CleanWindowText();
             try
             {
